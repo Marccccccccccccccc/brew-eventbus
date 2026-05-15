@@ -17,4 +17,10 @@ public @interface Subscribe {
      * @return the priority
      */
     int priority() default 0;
+
+    /**
+     * Whether the listener should be invoked asynchronously.
+     * @return true if async
+     */
+    boolean async() default false;
 }

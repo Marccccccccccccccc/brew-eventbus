@@ -7,6 +7,10 @@ import brewdevelopment.eventbus.event.stats.EventStats;
 import java.util.Collection;
 import java.util.function.Predicate;
 
+/**
+ * The core interface for the event bus system.
+ * Handles event subscription, dispatching, and filtering.
+ */
 public interface IEventBus {
 
     /**
@@ -22,11 +26,11 @@ public interface IEventBus {
             EventListener<E> listener,
             Module owner
     ) {
-        subscribe(eventType, listener, owner, 0);
+        subscribe(eventType, listener, owner, 0, false);
     }
 
     /**
-     * Subscribes a listener to a specific event type with priority
+     * Subscribes a listener to a specific event type with priority.
      *
      * @param eventType the class of the event to listen for
      * @param listener  the listener implementation
@@ -34,11 +38,31 @@ public interface IEventBus {
      * @param priority  the priority of the listener (higher values called first)
      * @param <E>       the event type
      */
-    <E extends Event> void subscribe(
+    default <E extends Event> void subscribe(
             Class<E> eventType,
             EventListener<E> listener,
             Module owner,
             int priority
+    ) {
+        subscribe(eventType, listener, owner, priority, false);
+    }
+
+    /**
+     * Subscribes a listener to a specific event type with priority and async flag.
+     *
+     * @param eventType the class of the event to listen for
+     * @param listener  the listener implementation
+     * @param owner     the module owning this listener
+     * @param priority  the priority of the listener (higher values called first)
+     * @param async     whether the listener should be invoked asynchronously
+     * @param <E>       the event type
+     */
+    <E extends Event> void subscribe(
+            Class<E> eventType,
+            EventListener<E> listener,
+            Module owner,
+            int priority,
+            boolean async
     );
 
     /**
@@ -95,4 +119,9 @@ public interface IEventBus {
      * @return all registered listeners
      */
     Collection<RegisteredListener<?>> getAllListeners();
+
+    /**
+     * Shuts down the asynchronous execution service.
+     */
+    void shutdown();
 }

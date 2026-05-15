@@ -3,7 +3,7 @@ package brewdevelopment.eventbus;
 import brewdevelopment.eventbus.event.Event;
 
 /**
- * Contextual information for an brewdevelopment.eventbus.event dispatch.
+ * Contextual information for an event dispatch.
  * Used primarily by dispatch filters to make decisions.
  *
  * @param listener the listener targeted for this dispatch
@@ -15,5 +15,4 @@ public record ListenerContext<E extends Event>(
         EventListener<E> listener,
         E event,
         Module owner) {
-
 }

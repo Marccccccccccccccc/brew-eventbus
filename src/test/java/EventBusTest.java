@@ -2,10 +2,14 @@ import brewdevelopment.eventbus.EventBus;
 import brewdevelopment.eventbus.EventListener;
 import brewdevelopment.eventbus.event.Event;
 import brewdevelopment.eventbus.event.Subscribe;
+import brewdevelopment.eventbus.event.CancellableEvent;
+import brewdevelopment.eventbus.event.MutableEventValue;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -107,6 +111,67 @@ class EventBusTest {
         eventBus.post(new TestEvent());
         assertEquals(2, callCount.get(), "No listeners from testModule should be called");
     }
+
+    @Test
+    void testAsyncDispatch() throws InterruptedException {
+        EventBus eventBus = new EventBus();
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicBoolean asyncCalled = new AtomicBoolean(false);
+
+        eventBus.subscribe(TestEvent.class, event -> {
+            asyncCalled.set(true);
+            latch.countDown();
+        }, null, 0, true);
+
+        eventBus.post(new TestEvent());
+        assertFalse(asyncCalled.get(), "Async listener should not have been called immediately");
+
+        assertTrue(latch.await(1, TimeUnit.SECONDS), "Async listener should be called within 1 second");
+        assertTrue(asyncCalled.get());
+        
+        eventBus.shutdown();
+    }
+
+    @Test
+    void testAsyncConstraints() {
+        EventBus eventBus = new EventBus();
+        
+        assertThrows(IllegalArgumentException.class, () -> {
+            eventBus.subscribe(CancellableTestEvent.class, event -> {}, null, 0, true);
+        }, "Should forbid async subscription to CancellableEvent");
+
+        assertThrows(IllegalArgumentException.class, () -> {
+            eventBus.subscribe(MutableTestEvent.class, event -> {}, null, 0, true);
+        }, "Should forbid async subscription to MutableEventValue");
+    }
+
+    static class CancellableTestEvent implements CancellableEvent {
+        @Override public boolean isCancelled() { return false; }
+        @Override public boolean cancel() { return true; }
+    }
+
+    static class MutableTestEvent implements MutableEventValue<String> {
+        private String val;
+        @Override public String value() { return val; }
+        @Override public void set(String value) { this.val = value; }
+    }
+
+    @Test
+    void testRecordEvent() {
+        EventBus eventBus = new EventBus();
+        AtomicBoolean called = new AtomicBoolean(false);
+
+        eventBus.subscribe(TestRecordEvent.class, event -> {
+            if (event.message().equals("Hello")) {
+                called.set(true);
+            }
+        }, null);
+
+        eventBus.post(new TestRecordEvent("Hello"));
+        assertTrue(called.get(), "Record event should be handled correctly");
+    }
+
+    record TestRecordEvent(String message) implements Event {}
 
     interface DeepInterface extends Event {}
     interface SubDeepInterface extends DeepInterface {}

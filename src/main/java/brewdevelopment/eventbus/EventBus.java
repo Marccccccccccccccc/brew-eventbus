@@ -1,7 +1,9 @@
 package brewdevelopment.eventbus;
 
+import brewdevelopment.eventbus.event.CancellableEvent;
 import brewdevelopment.eventbus.event.Event;
 import brewdevelopment.eventbus.event.ExceptionHandler;
+import brewdevelopment.eventbus.event.MutableEventValue;
 import brewdevelopment.eventbus.event.Subscribe;
 import brewdevelopment.eventbus.event.stats.EventStats;
 
@@ -13,6 +15,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
@@ -32,15 +36,33 @@ public final class EventBus implements IEventBus {
     private final List<Predicate<ListenerContext<?>>> dispatchFilters = new CopyOnWriteArrayList<>();
     private ExceptionHandler exceptionHandler = (event, listener, exception) -> exception.printStackTrace();
 
+    private final ExecutorService asyncExecutor = Executors.newFixedThreadPool(
+            Runtime.getRuntime().availableProcessors(),
+            r -> {
+                Thread thread = new Thread(r, "EventBus-Async-Thread");
+                thread.setDaemon(true);
+                return thread;
+            }
+    );
+
     @Override
     public <E extends Event> void subscribe(
             Class<E> eventType,
             EventListener<E> listener,
             Module owner,
-            int priority
+            int priority,
+            boolean async
     ) {
+        if (async) {
+            if (CancellableEvent.class.isAssignableFrom(eventType)) {
+                throw new IllegalArgumentException("Cannot subscribe an asynchronous listener to a CancellableEvent: " + eventType.getName());
+            }
+            if (MutableEventValue.class.isAssignableFrom(eventType)) {
+                throw new IllegalArgumentException("Cannot subscribe an asynchronous listener to a MutableEventValue: " + eventType.getName());
+            }
+        }
         List<RegisteredListener<?>> typeListeners = listeners.computeIfAbsent(eventType, k -> new CopyOnWriteArrayList<>());
-        typeListeners.add(new RegisteredListener<>(eventType, listener, owner, priority));
+        typeListeners.add(new RegisteredListener<>(eventType, listener, owner, priority, async));
         // Sort by priority (descending)
         typeListeners.sort((a, b) -> Integer.compare(b.priority(), a.priority()));
     }
@@ -71,7 +93,7 @@ public final class EventBus implements IEventBus {
                     }
                 };
 
-                subscribe(eventType, listener, owner, annotation.priority());
+                subscribe(eventType, listener, owner, annotation.priority(), annotation.async());
             }
         }
     }
@@ -112,19 +134,27 @@ public final class EventBus implements IEventBus {
                     }
                 }
 
-                long handlerStart = System.nanoTime();
-                try {
-                    listener.listener().invoke(event);
-                } catch (Throwable t) {
-                    exceptionHandler.handle(event, listener, t);
-                } finally {
-                    listener.stats().record(System.nanoTime() - handlerStart);
+                if (listener.async()) {
+                    asyncExecutor.submit(() -> invokeListener(event, listener));
+                } else {
+                    invokeListener(event, listener);
                 }
             }
         }
         
         eventStats.computeIfAbsent(eventClass, k -> new EventStats())
                 .record(System.nanoTime() - start);
+    }
+
+    private <E extends Event> void invokeListener(E event, RegisteredListener<E> listener) {
+        long handlerStart = System.nanoTime();
+        try {
+            listener.listener().invoke(event);
+        } catch (Throwable t) {
+            exceptionHandler.handle(event, listener, t);
+        } finally {
+            listener.stats().record(System.nanoTime() - handlerStart);
+        }
     }
 
     private List<Class<?>> getHierarchy(Class<?> eventClass) {
@@ -182,5 +212,10 @@ public final class EventBus implements IEventBus {
         return listeners.values().stream()
                 .flatMap(List::stream)
                 .collect(Collectors.toList());
+    }
+
+    @Override
+    public void shutdown() {
+        asyncExecutor.shutdown();
     }
 }
