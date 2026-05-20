@@ -102,7 +102,7 @@ public final class EventBus implements IEventBus {
     @SuppressWarnings("unchecked")
     public <E extends Event> void post(E event) {
         long start = System.nanoTime();
-        Class<? extends Event> eventClass = (Class<? extends Event>) event.getClass();
+        Class<? extends Event> eventClass = event.getClass();
         List<Class<?>> hierarchy = getHierarchy(eventClass);
 
         for (Class<?> clazz : hierarchy) {
