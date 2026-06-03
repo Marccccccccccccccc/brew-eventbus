@@ -9,11 +9,12 @@ public interface CancellableEvent extends Event {
     /**
      * @return true if the event has been cancelled
      */
-    public boolean isCancelled();
+    boolean isCancelled();
 
     /**
      * Cancels the event.
+     *
      * @return true if the cancellation was successful
      */
-    public boolean cancel();
+    boolean cancel();
 }

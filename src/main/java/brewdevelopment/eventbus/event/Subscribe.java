@@ -14,12 +14,14 @@ import java.lang.annotation.Target;
 public @interface Subscribe {
     /**
      * The priority of the listener. Higher values are called first.
+     *
      * @return the priority
      */
     int priority() default 0;
 
     /**
      * Whether the listener should be invoked asynchronously.
+     *
      * @return true if async
      */
     boolean async() default false;

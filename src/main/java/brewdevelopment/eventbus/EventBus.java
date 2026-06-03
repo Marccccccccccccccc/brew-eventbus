@@ -1,18 +1,15 @@
 package brewdevelopment.eventbus;
 
-import brewdevelopment.eventbus.event.CancellableEvent;
-import brewdevelopment.eventbus.event.Event;
-import brewdevelopment.eventbus.event.ExceptionHandler;
-import brewdevelopment.eventbus.event.MutableEventValue;
-import brewdevelopment.eventbus.event.Subscribe;
+import brewdevelopment.eventbus.event.*;
 import brewdevelopment.eventbus.event.stats.EventStats;
+import brewdevelopment.eventbus.internal.*;
+import org.jetbrains.annotations.Contract;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.UnmodifiableView;
 
 import java.lang.reflect.Method;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
+import java.lang.reflect.Modifier;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
@@ -21,21 +18,18 @@ import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 /**
- * A high-performance, thread-safe implementation of {@link IEventBus}.
- * <p>
- * This implementation uses a {@link ConcurrentHashMap} for listener storage and 
- * caches class hierarchies to optimize polymorphic event dispatching.
+ * A high-performance ASM backed implementation of {@link IEventBus}.
  */
-@SuppressWarnings({"unused", "SpellCheckingInspection"})
+@SuppressWarnings({"unused", "SpellCheckingInspection", "unchecked"})
 public final class EventBus implements IEventBus {
 
     private final Map<Class<? extends Event>, List<RegisteredListener<?>>> listeners = new ConcurrentHashMap<>();
-    private final Map<Class<?>, List<Class<?>>> hierarchyCache = new ConcurrentHashMap<>();
+    private final Map<Class<? extends Event>, PipeLine> pipelines = new ConcurrentHashMap<>();
     private final Map<Class<? extends Event>, EventStats> eventStats = new ConcurrentHashMap<>();
+    private final Map<Class<?>, List<Class<?>>> hierarchyCache = new ConcurrentHashMap<>();
 
     private final List<Predicate<ListenerContext<?>>> dispatchFilters = new CopyOnWriteArrayList<>();
-    private ExceptionHandler exceptionHandler = (event, listener, exception) -> exception.printStackTrace();
-
+    private final ThreadLocal<Event> currentEvent = new ThreadLocal<>();
     private final ExecutorService asyncExecutor = Executors.newFixedThreadPool(
             Runtime.getRuntime().availableProcessors(),
             r -> {
@@ -44,12 +38,22 @@ public final class EventBus implements IEventBus {
                 return thread;
             }
     );
+    private ExceptionHandler exceptionHandler = (event, listener, exception) -> exception.printStackTrace();
+    private final ErrorCallBack errorCallBack = throwable -> {
+        Event event = currentEvent.get();
+        if (event != null) {
+            exceptionHandler.handle(event, null, throwable);
+        } else {
+            throwable.printStackTrace();
+        }
+    };
 
     @Override
     public <E extends Event> void subscribe(
             Class<E> eventType,
             EventListener<E> listener,
-            Module owner,
+            Object owner,
+            Object container,
             int priority,
             boolean async
     ) {
@@ -61,17 +65,38 @@ public final class EventBus implements IEventBus {
                 throw new IllegalArgumentException("Cannot subscribe an asynchronous listener to a MutableEventValue: " + eventType.getName());
             }
         }
+
+        WrappedEventCaller caller;
+        if (listener instanceof WrappedEventCaller) {
+            caller = (WrappedEventCaller) listener;
+        } else {
+            caller = event -> listener.invoke((E) event);
+        }
+
+        if (async) {
+            WrappedEventCaller syncCaller = caller;
+            caller = event -> asyncExecutor.submit(() -> syncCaller.call(event));
+        }
+
         List<RegisteredListener<?>> typeListeners = listeners.computeIfAbsent(eventType, k -> new CopyOnWriteArrayList<>());
-        typeListeners.add(new RegisteredListener<>(eventType, listener, owner, priority, async));
-        // Sort by priority (descending)
+        typeListeners.add(new RegisteredListener<>(eventType, (EventListener<E>) caller, listener, owner, container, priority, async));
+
         typeListeners.sort((a, b) -> Integer.compare(b.priority(), a.priority()));
+        pipelines.clear();
     }
 
     @Override
-    public void register(Object container, Module owner) {
-        for (Method method : container.getClass().getDeclaredMethods()) {
+    public void register(Object container, Object owner) {
+        Class<?> clazz = (container instanceof Class<?>) ? (Class<?>) container : container.getClass();
+        boolean isStaticOnly = container instanceof Class<?>;
+
+        for (Method method : clazz.getDeclaredMethods()) {
             if (method.isAnnotationPresent(Subscribe.class)) {
                 if (method.getParameterCount() != 1) {
+                    continue;
+                }
+
+                if (isStaticOnly && !Modifier.isStatic(method.getModifiers())) {
                     continue;
                 }
 
@@ -80,81 +105,49 @@ public final class EventBus implements IEventBus {
                     continue;
                 }
 
-                @SuppressWarnings("unchecked")
                 Class<Event> eventType = (Class<Event>) paramType;
                 Subscribe annotation = method.getAnnotation(Subscribe.class);
 
                 method.setAccessible(true);
-                EventListener<Event> listener = event -> {
-                    try {
-                        method.invoke(container, event);
-                    } catch (Exception e) {
-                        throw new RuntimeException("Failed to invoke annotated listener", e);
-                    }
-                };
-
-                subscribe(eventType, listener, owner, annotation.priority(), annotation.async());
+                WrappedEventCaller caller = CallerGenerator.generate(container, method, eventType);
+                subscribe(eventType, caller, owner, isStaticOnly ? null : container, annotation.priority(), annotation.async());
             }
         }
     }
 
+    @Contract("_ -> param1")
     @Override
-    @SuppressWarnings("unchecked")
-    public <E extends Event> void post(E event) {
-        long start = System.nanoTime();
+    public <E extends Event> @NotNull E post(@NotNull E event) {
         Class<? extends Event> eventClass = event.getClass();
-        List<Class<?>> hierarchy = getHierarchy(eventClass);
 
+        if (dispatchFilters.isEmpty()) {
+            currentEvent.set(event);
+            try {
+                PipeLine pipeline = pipelines.computeIfAbsent(eventClass, this::rebuildPipeline);
+                pipeline.execute(event);
+            } finally {
+                currentEvent.remove();
+            }
+        } else {
+            slowPost(event);
+        }
+
+        return event;
+    }
+
+    private PipeLine rebuildPipeline(Class<? extends Event> eventClass) {
+        List<RegisteredListener<?>> applicable = new ArrayList<>();
+        List<Class<?>> hierarchy = getHierarchy(eventClass);
         for (Class<?> clazz : hierarchy) {
             List<RegisteredListener<?>> typeListeners = listeners.get(clazz);
-            if (typeListeners == null || typeListeners.isEmpty()) {
-                continue;
-            }
-
-            for (RegisteredListener<?> raw : typeListeners) {
-                RegisteredListener<E> listener = (RegisteredListener<E>) raw;
-
-                if (!dispatchFilters.isEmpty()) {
-                    ListenerContext<E> context = new ListenerContext<>(
-                            listener.listener(),
-                            event,
-                            listener.owner()
-                    );
-
-                    boolean rejected = false;
-                    for (Predicate<ListenerContext<?>> filter : dispatchFilters) {
-                        if (filter.test(context)) {
-                            rejected = true;
-                            break;
-                        }
-                    }
-
-                    if (rejected) {
-                        continue;
-                    }
-                }
-
-                if (listener.async()) {
-                    asyncExecutor.submit(() -> invokeListener(event, listener));
-                } else {
-                    invokeListener(event, listener);
-                }
+            if (typeListeners != null) {
+                applicable.addAll(typeListeners);
             }
         }
-        
-        eventStats.computeIfAbsent(eventClass, k -> new EventStats())
-                .record(System.nanoTime() - start);
-    }
+        applicable.sort((a, b) -> Integer.compare(b.priority(), a.priority()));
 
-    private <E extends Event> void invokeListener(E event, RegisteredListener<E> listener) {
-        long handlerStart = System.nanoTime();
-        try {
-            listener.listener().invoke(event);
-        } catch (Throwable t) {
-            exceptionHandler.handle(event, listener, t);
-        } finally {
-            listener.stats().record(System.nanoTime() - handlerStart);
-        }
+        EventStats stats = eventStats.computeIfAbsent(eventClass, k -> new EventStats());
+        return PipelineGenerator.generate(eventClass, applicable, errorCallBack, stats);
     }
 
     private List<Class<?>> getHierarchy(Class<?> eventClass) {
@@ -176,25 +169,74 @@ public final class EventBus implements IEventBus {
         collectHierarchy(clazz.getSuperclass(), hierarchy);
     }
 
+    private <E extends Event> void slowPost(@NotNull E event) {
+        long start = System.nanoTime();
+        Class<? extends Event> eventClass = event.getClass();
+
+        List<RegisteredListener<?>> all = new ArrayList<>();
+        List<Class<?>> hierarchy = getHierarchy(eventClass);
+        for (Class<?> clazz : hierarchy) {
+            List<RegisteredListener<?>> typeListeners = listeners.get(clazz);
+            if (typeListeners != null) all.addAll(typeListeners);
+        }
+        all.sort((a, b) -> Integer.compare(b.priority(), a.priority()));
+
+        for (RegisteredListener<?> raw : all) {
+            RegisteredListener<E> listener = (RegisteredListener<E>) raw;
+            ListenerContext<E> context = new ListenerContext<>(listener.listener(), event, listener.owner(), listener.container());
+
+            boolean rejected = false;
+            for (Predicate<ListenerContext<?>> filter : dispatchFilters) {
+                if (filter.test(context)) {
+                    rejected = true;
+                    break;
+                }
+            }
+
+            if (rejected) continue;
+
+            if (listener.async()) {
+                asyncExecutor.submit(() -> invokeListener(event, listener));
+            } else {
+                invokeListener(event, listener);
+                if (event instanceof CancellableEvent ce && ce.isCancelled()) break;
+            }
+        }
+
+        eventStats.computeIfAbsent(eventClass, k -> new EventStats()).record(System.nanoTime() - start);
+    }
+
+    private <E extends Event> void invokeListener(E event, RegisteredListener<E> listener) {
+        long handlerStart = System.nanoTime();
+        try {
+            listener.listener().invoke(event);
+        } catch (Throwable t) {
+            exceptionHandler.handle(event, listener, t);
+        } finally {
+            listener.stats().record(System.nanoTime() - handlerStart);
+        }
+    }
+
     @Override
     public void unsubscribe(EventListener<?> listener) {
         for (List<RegisteredListener<?>> typeListeners : listeners.values()) {
-            typeListeners.removeIf(registered -> registered.listener().equals(listener));
+            typeListeners.removeIf(registered -> registered.originalListener().equals(listener));
         }
+        pipelines.clear();
     }
 
     @Override
-    public void unsubscribeAll(Module owner) {
+    public void unregister(Object owner) {
         for (List<RegisteredListener<?>> typeListeners : listeners.values()) {
-            typeListeners.removeIf(registered -> registered.owner().equals(owner));
+            typeListeners.removeIf(registered -> registered.owner() != null && registered.owner().equals(owner));
         }
+        pipelines.clear();
     }
 
     @Override
-    public void addDispatchFilter(
-            Predicate<ListenerContext<?>> filter
-    ) {
+    public void addDispatchFilter(Predicate<ListenerContext<?>> filter) {
         dispatchFilters.add(filter);
+        pipelines.clear();
     }
 
     @Override
@@ -207,11 +249,20 @@ public final class EventBus implements IEventBus {
         return eventStats.getOrDefault(eventType, new EventStats());
     }
 
+    @Contract(pure = true)
+    @Override
+    public @NotNull @UnmodifiableView Map<Class<? extends Event>, EventStats> getEventStats() {
+        return Collections.unmodifiableMap(eventStats);
+    }
+
     @Override
     public Collection<RegisteredListener<?>> getAllListeners() {
-        return listeners.values().stream()
-                .flatMap(List::stream)
-                .collect(Collectors.toList());
+        return listeners.values().stream().flatMap(List::stream).collect(Collectors.toList());
+    }
+
+    @Override
+    public int getRegisteredEventCount() {
+        return listeners.size();
     }
 
     @Override

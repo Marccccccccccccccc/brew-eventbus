@@ -12,7 +12,9 @@ public final class RegisteredListener<E extends Event> {
 
     private final Class<E> eventType;
     private final EventListener<E> listener;
-    private final Module owner;
+    private final EventListener<E> originalListener;
+    private final Object owner;
+    private final Object container;
     private final int priority;
     private final boolean async;
     private final HandlerStats stats = new HandlerStats();
@@ -20,13 +22,17 @@ public final class RegisteredListener<E extends Event> {
     public RegisteredListener(
             Class<E> eventType,
             EventListener<E> listener,
-            Module owner,
+            EventListener<E> originalListener,
+            Object owner,
+            Object container,
             int priority,
             boolean async
     ) {
         this.eventType = eventType;
         this.listener = listener;
+        this.originalListener = originalListener;
         this.owner = owner;
+        this.container = container;
         this.priority = priority;
         this.async = async;
     }
@@ -39,8 +45,16 @@ public final class RegisteredListener<E extends Event> {
         return listener;
     }
 
-    public Module owner() {
+    public EventListener<E> originalListener() {
+        return originalListener;
+    }
+
+    public Object owner() {
         return owner;
+    }
+
+    public Object container() {
+        return container;
     }
 
     public int priority() {

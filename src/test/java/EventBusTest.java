@@ -99,17 +99,17 @@ class EventBusTest {
     void testUnsubscribeAll() {
         EventBus eventBus = new EventBus();
         AtomicInteger callCount = new AtomicInteger(0);
-        Module testModule = this.getClass().getModule();
+        Object testOwner = new Object();
 
-        eventBus.subscribe(TestEvent.class, event -> callCount.incrementAndGet(), testModule);
-        eventBus.subscribe(TestEvent.class, event -> callCount.incrementAndGet(), testModule);
+        eventBus.subscribe(TestEvent.class, event -> callCount.incrementAndGet(), testOwner);
+        eventBus.subscribe(TestEvent.class, event -> callCount.incrementAndGet(), testOwner);
         
         eventBus.post(new TestEvent());
         assertEquals(2, callCount.get());
 
-        eventBus.unsubscribeAll(testModule);
+        eventBus.unregister(testOwner);
         eventBus.post(new TestEvent());
-        assertEquals(2, callCount.get(), "No listeners from testModule should be called");
+        assertEquals(2, callCount.get(), "No listeners from testOwner should be called");
     }
 
     @Test

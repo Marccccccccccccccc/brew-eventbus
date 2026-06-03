@@ -5,6 +5,7 @@ import brewdevelopment.eventbus.event.ExceptionHandler;
 import brewdevelopment.eventbus.event.stats.EventStats;
 
 import java.util.Collection;
+import java.util.Map;
 import java.util.function.Predicate;
 
 /**
@@ -15,105 +16,84 @@ public interface IEventBus {
 
     /**
      * Subscribes a listener to a specific event type with default priority (0).
-     *
-     * @param eventType the class of the event to listen for
-     * @param listener  the listener implementation
-     * @param owner     the module owning this listener, used for bulk unsubscription
-     * @param <E>       the event type
      */
-    default <E extends Event> void subscribe(
-            Class<E> eventType,
-            EventListener<E> listener,
-            Module owner
-    ) {
-        subscribe(eventType, listener, owner, 0, false);
+    default <E extends Event> void subscribe(Class<E> eventType, EventListener<E> listener) {
+        subscribe(eventType, listener, null, null, 0, false);
     }
 
     /**
-     * Subscribes a listener to a specific event type with priority.
-     *
-     * @param eventType the class of the event to listen for
-     * @param listener  the listener implementation
-     * @param owner     the module owning this listener
-     * @param priority  the priority of the listener (higher values called first)
-     * @param <E>       the event type
+     * Subscribes a listener with an explicit owner for unregistration.
      */
-    default <E extends Event> void subscribe(
-            Class<E> eventType,
-            EventListener<E> listener,
-            Module owner,
-            int priority
-    ) {
-        subscribe(eventType, listener, owner, priority, false);
+    default <E extends Event> void subscribe(Class<E> eventType, EventListener<E> listener, Object owner) {
+        subscribe(eventType, listener, owner, null, 0, false);
     }
 
     /**
-     * Subscribes a listener to a specific event type with priority and async flag.
-     *
-     * @param eventType the class of the event to listen for
-     * @param listener  the listener implementation
-     * @param owner     the module owning this listener
-     * @param priority  the priority of the listener (higher values called first)
-     * @param async     whether the listener should be invoked asynchronously
-     * @param <E>       the event type
+     * Subscribes a listener with priority.
      */
-    <E extends Event> void subscribe(
-            Class<E> eventType,
-            EventListener<E> listener,
-            Module owner,
-            int priority,
-            boolean async
-    );
+    default <E extends Event> void subscribe(Class<E> eventType, EventListener<E> listener, Object owner, int priority) {
+        subscribe(eventType, listener, owner, null, priority, false);
+    }
+
+    /**
+     * Subscribes a listener with priority and async flag.
+     */
+    default <E extends Event> void subscribe(Class<E> eventType, EventListener<E> listener, Object owner, int priority, boolean async) {
+        subscribe(eventType, listener, owner, null, priority, async);
+    }
+
+    /**
+     * Full subscription method.
+     */
+    <E extends Event> void subscribe(Class<E> eventType, EventListener<E> listener, Object owner, Object container, int priority, boolean async);
 
     /**
      * Registers all methods marked with @Subscribe in the given container.
-     *
-     * @param container the object containing listener methods
-     * @param owner     the module owning these listeners
+     * Uses the container itself as the owner.
      */
-    void register(Object container, Module owner);
+    default void register(Object container) {
+        register(container, container);
+    }
 
     /**
-     * Dispatches an event to all registered listeners of its type and supertypes.
-     *
-     * @param event the event to post
-     * @param <E>   the event type
+     * Registers all methods marked with @Subscribe with an explicit owner.
      */
-    <E extends Event> void post(E event);
+    void register(Object container, Object owner);
+
+    /**
+     * Dispatches an event and returns it.
+     */
+    <E extends Event> E post(E event);
 
     /**
      * Unsubscribes a specific listener instance.
-     *
-     * @param listener the listener to remove
      */
     void unsubscribe(EventListener<?> listener);
 
     /**
-     * Removes all listeners owned by a specific module.
-     *
-     * @param owner the module whose listeners should be removed
+     * Removes all listeners owned by a specific object.
      */
-    void unsubscribeAll(Module owner);
+    void unregister(Object owner);
 
     /**
-     * Adds a global filter that can intercept or block event dispatch.
-     *
-     * @param filter the filter to add
+     * Adds a global filter.
      */
     void addDispatchFilter(Predicate<ListenerContext<?>> filter);
 
     /**
-     * Sets the global handler for exceptions thrown by listeners.
-     *
-     * @param handler the exception handler
+     * Sets the exception handler.
      */
     void setExceptionHandler(ExceptionHandler handler);
 
     /**
-     * @param eventType the event type
-     * @return the statistics for the given event type
+     * @return statistics for an event type
      */
     EventStats getStats(Class<? extends Event> eventType);
+
+    /**
+     * @return all event statistics
+     */
+    Map<Class<? extends Event>, EventStats> getEventStats();
 
     /**
      * @return all registered listeners
@@ -121,7 +101,12 @@ public interface IEventBus {
     Collection<RegisteredListener<?>> getAllListeners();
 
     /**
-     * Shuts down the asynchronous execution service.
+     * @return the number of unique event types
+     */
+    int getRegisteredEventCount();
+
+    /**
+     * Shuts down async services.
      */
     void shutdown();
 }

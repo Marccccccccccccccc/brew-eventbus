@@ -1,4 +1,5 @@
 package brewdevelopment.eventbus.event;
+
 /**
  * An interface for events that hold a value that can be modified by listeners.
  * <p>
@@ -10,11 +11,12 @@ public interface MutableEventValue<T> extends Event {
     /**
      * @return the current value
      */
-    public T value();
+    T value();
 
     /**
      * Sets a new value for the event.
+     *
      * @param value the new value
      */
-    public void set(T value);
+    void set(T value);
 }
