@@ -18,8 +18,8 @@ public class CallerGenerator implements Opcodes {
 
     public static WrappedEventCaller generate(Object container, Method method, Class<? extends Event> eventType) {
         boolean isStatic = Modifier.isStatic(method.getModifiers());
-        Class<?> ownerClass = isStatic ? (Class<?>) container : container.getClass();
-
+        Class<?> ownerClass = method.getDeclaringClass();
+        
         if (!Modifier.isPublic(ownerClass.getModifiers()) || !Modifier.isPublic(method.getModifiers())) {
             return event -> {
                 try {
