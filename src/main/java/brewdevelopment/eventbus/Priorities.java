@@ -1,8 +1,0 @@
-package brewdevelopment.eventbus;
-
-public class Priorities {
-    public static final int HIGHEST = 200;
-    public static final int HIGH = 100;
-    public static final int LOW = -100;
-    public static final int LOWEST = -200;
-}
