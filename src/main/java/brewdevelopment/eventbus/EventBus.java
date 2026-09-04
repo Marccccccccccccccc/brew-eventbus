@@ -20,8 +20,18 @@ import java.util.stream.Collectors;
 /**
  * A high-performance ASM backed implementation of {@link IEventBus}.
  */
-@SuppressWarnings({"unused", "SpellCheckingInspection", "unchecked"})
+@SuppressWarnings({"unused", "unchecked"})
 public final class EventBus implements IEventBus {
+
+    public EventBus() {
+        this.config = Configuration.DEFAULT;
+    }
+
+    public EventBus(@NotNull Configuration config) {
+        this.config = Objects.requireNonNull(config, "config cannot be null");
+    }
+
+    private final Configuration config;
 
     private final Map<Class<? extends Event>, List<RegisteredListener<?>>> listeners = new ConcurrentHashMap<>();
     private final Map<Class<? extends Event>, PipeLine> pipelines = new ConcurrentHashMap<>();
@@ -79,7 +89,7 @@ public final class EventBus implements IEventBus {
         }
 
         List<RegisteredListener<?>> typeListeners = listeners.computeIfAbsent(eventType, k -> new CopyOnWriteArrayList<>());
-        typeListeners.add(new RegisteredListener<>(eventType, (EventListener<E>) caller, listener, owner, container, priority, async));
+        typeListeners.add(new RegisteredListener<>(eventType, (EventListener<E>) caller, listener, owner, container, priority, async, config.recordStats()));
 
         typeListeners.sort((a, b) -> Integer.compare(b.priority(), a.priority()));
         pipelines.clear();
@@ -93,10 +103,12 @@ public final class EventBus implements IEventBus {
         for (Method method : clazz.getDeclaredMethods()) {
             if (method.isAnnotationPresent(Subscribe.class)) {
                 if (method.getParameterCount() != 1) {
+                    System.err.println("Method " + method.getName() + " in class " + clazz.getName() + " is annotated with @Subscribe but does not have exactly one parameter.");
                     continue;
                 }
 
                 if (isStaticOnly && !Modifier.isStatic(method.getModifiers())) {
+                    System.err.println("Method " + method.getName() + " in class " + clazz.getName() + " is annotated with @Subscribe but is not static, while the container is a Class.");
                     continue;
                 }
 
@@ -109,7 +121,7 @@ public final class EventBus implements IEventBus {
                 Subscribe annotation = method.getAnnotation(Subscribe.class);
 
                 method.setAccessible(true);
-                WrappedEventCaller caller = CallerGenerator.generate(container, method, eventType);
+                WrappedEventCaller caller = CallerGenerator.generate(container, method, eventType, config);
                 subscribe(eventType, caller, owner, isStaticOnly ? null : container, annotation.priority(), annotation.async());
             }
         }
@@ -146,8 +158,10 @@ public final class EventBus implements IEventBus {
         }
         applicable.sort((a, b) -> Integer.compare(b.priority(), a.priority()));
 
-        EventStats stats = eventStats.computeIfAbsent(eventClass, k -> new EventStats());
-        return PipelineGenerator.generate(eventClass, applicable, errorCallBack, stats);
+        EventStats stats = config.recordStats()
+                ? eventStats.computeIfAbsent(eventClass, k -> new EventStats())
+                : EventStats.noOp();
+        return PipelineGenerator.generate(eventClass, applicable, errorCallBack, stats, config);
     }
 
     private List<Class<?>> getHierarchy(Class<?> eventClass) {
@@ -203,7 +217,9 @@ public final class EventBus implements IEventBus {
             }
         }
 
-        eventStats.computeIfAbsent(eventClass, k -> new EventStats()).record(System.nanoTime() - start);
+        if (config.recordStats()) {
+            eventStats.computeIfAbsent(eventClass, k -> new EventStats()).record(System.nanoTime() - start);
+        }
     }
 
     private <E extends Event> void invokeListener(E event, RegisteredListener<E> listener) {
@@ -213,7 +229,9 @@ public final class EventBus implements IEventBus {
         } catch (Throwable t) {
             exceptionHandler.handle(event, listener, t);
         } finally {
-            listener.stats().record(System.nanoTime() - handlerStart);
+            if (config.recordStats()) {
+                listener.stats().record(System.nanoTime() - handlerStart);
+            }
         }
     }
 
@@ -246,12 +264,18 @@ public final class EventBus implements IEventBus {
 
     @Override
     public EventStats getStats(Class<? extends Event> eventType) {
-        return eventStats.getOrDefault(eventType, new EventStats());
+        if (!config.recordStats()) {
+            return EventStats.noOp();
+        }
+        return eventStats.getOrDefault(eventType, EventStats.noOp());
     }
 
     @Contract(pure = true)
     @Override
     public @NotNull @UnmodifiableView Map<Class<? extends Event>, EventStats> getEventStats() {
+        if (!config.recordStats()) {
+            return Collections.emptyMap();
+        }
         return Collections.unmodifiableMap(eventStats);
     }
 

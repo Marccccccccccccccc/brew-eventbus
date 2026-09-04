@@ -1,14 +1,20 @@
 package brewdevelopment.eventbus.event.stats;
 
 /**
- * Statistics for a specific event type.
+ * Stats for a specific event type.
  */
 @SuppressWarnings("unused")
 public class EventStats {
+    private static final EventStats NO_OP = new EventStats() {};
+
     private long calls;
     private long totalTimeNs;
     private long maxTimeNs;
     private long minTimeNs = Long.MAX_VALUE;
+
+    public static EventStats noOp() {
+        return NO_OP;
+    }
 
     public synchronized void record(long durationNs) {
         calls++;

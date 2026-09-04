@@ -1,5 +1,6 @@
 package brewdevelopment.eventbus.internal;
 
+import brewdevelopment.eventbus.Configuration;
 import brewdevelopment.eventbus.asm.ASMClassUtils;
 import brewdevelopment.eventbus.asm.ClassDefiner;
 import brewdevelopment.eventbus.event.Event;
@@ -16,14 +17,19 @@ public class CallerGenerator implements Opcodes {
 
     private static final AtomicLong ID_GEN = new AtomicLong();
 
-    public static WrappedEventCaller generate(Object container, Method method, Class<? extends Event> eventType) {
+    public static WrappedEventCaller generate(
+            Object container,
+            Method method,
+            Class<? extends Event> eventType,
+            Configuration config
+    ) {
         boolean isStatic = Modifier.isStatic(method.getModifiers());
         Class<?> ownerClass = method.getDeclaringClass();
         
         if (!Modifier.isPublic(ownerClass.getModifiers()) || !Modifier.isPublic(method.getModifiers())) {
             return event -> {
                 try {
-                    method.setAccessible(true); //BOOO
+                    method.setAccessible(true);
                     method.invoke(isStatic ? null : container, event);
                 } catch (Exception e) {
                     throw new RuntimeException("Failed to invoke listener: " + method, e);
@@ -31,7 +37,7 @@ public class CallerGenerator implements Opcodes {
             };
         }
 
-        String className = "brewdevelopment/eventbus/generated/GeneratedCaller_" + method.getName() + "_" + ID_GEN.incrementAndGet();
+        String className = config.generatedCallerSupplier().get() + method.getName() + "_" + ID_GEN.incrementAndGet();
 
         //probably some unnecessary steps in here...
         ClassNode node = new ClassNode();

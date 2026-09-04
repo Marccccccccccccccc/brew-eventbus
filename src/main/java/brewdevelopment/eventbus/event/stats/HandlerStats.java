@@ -1,32 +1,35 @@
 package brewdevelopment.eventbus.event.stats;
 
+import lombok.Getter;
+
 /**
  * Statistics for a specific event listener.
  */
 @SuppressWarnings("unused")
 public class HandlerStats {
+    private static final HandlerStats NO_OP = new HandlerStats() {
+        @Override
+        public synchronized void record(long durationNs) {
+        }
+    };
+
+    @Getter
     private long calls;
+    @Getter
     private long totalTimeNs;
+    @Getter
     private long maxTimeNs;
     private long minTimeNs = Long.MAX_VALUE;
+
+    public static HandlerStats noOp() {
+        return NO_OP;
+    }
 
     public synchronized void record(long durationNs) {
         calls++;
         totalTimeNs += durationNs;
         if (durationNs < minTimeNs) minTimeNs = durationNs;
         if (durationNs > maxTimeNs) maxTimeNs = durationNs;
-    }
-
-    public long getCalls() {
-        return calls;
-    }
-
-    public long getTotalTimeNs() {
-        return totalTimeNs;
-    }
-
-    public long getMaxTimeNs() {
-        return maxTimeNs;
     }
 
     public long getMinTimeNs() {

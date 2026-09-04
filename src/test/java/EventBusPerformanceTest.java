@@ -21,7 +21,6 @@ public class EventBusPerformanceTest {
             eventBus.subscribe(BenchEvent.class, event -> counter.incrementAndGet());
         }
 
-        // Warmup
         for (int i = 0; i < 200_000; i++) {
             eventBus.post(new BenchEvent());
         }
@@ -37,7 +36,6 @@ public class EventBusPerformanceTest {
         double nsPerPost = (double) (end - start) / iterations;
         double nsPerListener = nsPerPost / listenerCount;
 
-        System.out.println("--- Lambda Dispatch Benchmark ---");
         System.out.println("Listeners: " + listenerCount);
         System.out.println("Iterations: " + iterations);
         System.out.println("Total Time: " + String.format("%.2f", totalMs) + "ms");
@@ -56,7 +54,7 @@ public class EventBusPerformanceTest {
     @Test
     void benchmarkAnnotatedDispatch() {
         IEventBus eventBus = new EventBus();
-        int iterations = 10_000_000; 
+        int iterations = 10_000_0000;
         
         AnnotatedContainer container = new AnnotatedContainer();
         eventBus.register(container);

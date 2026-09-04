@@ -1,3 +1,4 @@
+import brewdevelopment.eventbus.Configuration;
 import brewdevelopment.eventbus.EventBus;
 import brewdevelopment.eventbus.EventListener;
 import brewdevelopment.eventbus.event.Event;
@@ -18,7 +19,6 @@ import static org.junit.jupiter.api.Assertions.*;
 class EventBusTest {
 
     static class TestEvent implements Event {}
-    static class SubTestEvent extends TestEvent {}
 
     @Test
     void testBasicSubscription() {
@@ -65,7 +65,7 @@ class EventBusTest {
 
     @Test
     void testExceptionHandling() {
-        EventBus eventBus = new EventBus();
+        EventBus eventBus = new EventBus(Configuration.builder().enableErrorCallbacks(true).warnOnInvalidListenerMethod(true).build());
         AtomicBoolean exceptionHandled = new AtomicBoolean(false);
 
         eventBus.setExceptionHandler((event, listener, exception) -> {
