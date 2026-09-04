@@ -1,5 +1,7 @@
 package brewdevelopment.eventbus.event.stats;
 
+import lombok.Getter;
+
 /**
  * Stats for a specific event type.
  */
@@ -7,7 +9,9 @@ package brewdevelopment.eventbus.event.stats;
 public class EventStats {
     private static final EventStats NO_OP = new EventStats() {};
 
+    @Getter
     private long calls;
+    @Getter
     private long totalTimeNs;
     private long maxTimeNs;
     private long minTimeNs = Long.MAX_VALUE;
@@ -21,14 +25,6 @@ public class EventStats {
         totalTimeNs += durationNs;
         if (durationNs < minTimeNs) minTimeNs = durationNs;
         if (durationNs > maxTimeNs) maxTimeNs = durationNs;
-    }
-
-    public long getCalls() {
-        return calls;
-    }
-
-    public long getTotalTimeNs() {
-        return totalTimeNs;
     }
 
     public double getAverageMs() {
